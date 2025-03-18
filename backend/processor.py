@@ -12,6 +12,8 @@ import time
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
 from pymongo import MongoClient
+from minio import Minio
+from minio.error import S3Error
 
 
 @dataclass
@@ -34,20 +36,40 @@ class VideoAnalysis:
 
 
 class YouTubeProcessor:
-    def __init__(self, api_key: str, output_dir: str = "processed_videos", mongo_uri: str = "mongodb://localhost:27017/"):
+    def __init__(
+        self,
+        api_key: str,
+        output_dir: str = "processed_videos",
+        mongo_uri: str = "mongodb+srv://dhruvpatel:dhruv77@cluster0.sedmq.mongodb.net/",
+    ):
         self.client = TwelveLabs(api_key=api_key)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.mongo_client = MongoClient(mongo_uri)
-        self.db = self.mongo_client['video_analysis']
-        self.collection = self.db['video_metadata']
+        self.db = self.mongo_client["video_analysis"]
+        self.collection = self.db["video_metadata"]
         self.setup_logging()
+        self.minio_client = Minio(
+            "192.168.1.111:9000",  # MinIO server URL
+            access_key="minioadmin",
+            secret_key="minioadmin",
+            secure=False,  # Set to True if using HTTPS
+        )
+        self.bucket_name = "video-highlights"  # Change as needed
+        self.create_bucket_if_not_exists()
 
     def setup_logging(self):
         logging.basicConfig(
             level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
         )
         self.logger = logging.getLogger(__name__)
+
+    def create_bucket_if_not_exists(self):
+        try:
+            if not self.minio_client.bucket_exists(self.bucket_name):
+                self.minio_client.make_bucket(self.bucket_name)
+        except S3Error as e:
+            print("Error creating bucket:", e)
 
     def download_youtube_video(
         self, url: str, cookies_path: Optional[str] = None
@@ -164,30 +186,38 @@ class YouTubeProcessor:
         highlights = []
         try:
             # Custom prompt to identify the most important key moments
-            key_moments_prompt = """Analyze this video and identify the 3-5 most important and impactful moments 
-            that would be perfect for creating short-form content or advertisements.
+            key_moments_prompt = """Analyze this video and identify EXACTLY 3-5 high-engagement moments 
+            that would be PERFECT FOR YOUTUBE SHORTS (vertical, 30-second content).
+
+            
             For each moment, provide:
-            1. A detailed description of what makes this moment significant
-            2. The exact start time in seconds (e.g., 45.2)
-            3. The exact end time in seconds (e.g., 58.7)
-            
-            Return your response in the following JSON format:
             {
-                "key_moments": [
-                    {
-                        "description": "detailed description of the moment",
-                        "start_time": start_time_in_seconds,
-                        "end_time": end_time_in_seconds
-                    }
-                ]
+            "key_moments": [
+                {
+                "description": "Why this makes a great YouTube Short",
+                "start_time": start_time_in_seconds,
+                "end_time": end_time_in_seconds
+                }
+            ]
             }
-            
-            Focus on moments that have:
-            - Strong emotional impact
-            - Clear value proposition
-            - Visually compelling content
-            - Memorable statements or demonstrations
-            - Call-to-action opportunities
+
+            STRICTLY SELECT ONLY MOMENTS THAT:
+            - Are EXACTLY 15-30 seconds long
+            - Have attention-grabbing first 3 seconds
+            - Contain emotional impact or clear value
+            - Would work well vertically without context
+            - Have viral potential (surprising elements)
+            - Would generate high engagement (comments, shares)
+            - Align with current YouTube Shorts trends
+            - Include clear call-to-action opportunity
+
+            PRIORITIZE moments with:
+            - Strong emotional reactions
+            - Surprising revelations
+            - Valuable demonstrations
+            - Narrative completeness within 30 seconds
+            - Potential for trending sounds/music
+
             """
 
             # Get AI-identified key moments using custom prompt
@@ -231,11 +261,20 @@ class YouTubeProcessor:
                         )
                         continue
 
+                    if duration < 15 or duration > 30:
+                        self.logger.warning(
+                            f"Short {i+1} has invalid duration ({duration}s). Adjusting to 30s maximum."
+                        )
+                    # If too long, cap at 30 seconds
+                    if duration > 30:
+                        end_time = start_time + 30
+
                     safe_text = "".join(
                         c for c in description if c.isalnum() or c in " "
                     ).strip()[:30]
                     output_file = highlights_dir / f"key_moment_{i+1}_{safe_text}.mp4"
 
+                    # For vertical cropping optimized for YouTube Shorts
                     cmd = [
                         "ffmpeg",
                         "-i",
@@ -244,14 +283,17 @@ class YouTubeProcessor:
                         str(start_time),
                         "-to",
                         str(end_time),
-                        "-c:v",
-                        "copy",
+                        "-vf",
+                        "crop=ih*9/16:ih,scale=1080:1920",  # Crop to 9:16 aspect ratio, scale to 1080x1920
                         "-c:a",
                         "copy",
                         str(output_file),
                         "-y",
                     ]
                     subprocess.run(cmd, check=True, capture_output=True)
+
+                    # Upload to MinIO
+                    self.upload_to_minio(output_file)
 
                     highlights.append(
                         VideoHighlight(
@@ -296,6 +338,9 @@ class YouTubeProcessor:
                         ]
                         subprocess.run(cmd, check=True, capture_output=True)
 
+                        # Upload to MinIO
+                        self.upload_to_minio(output_file)
+
                         highlights.append(
                             VideoHighlight(
                                 text=highlight.highlight,
@@ -316,28 +361,31 @@ class YouTubeProcessor:
             self.logger.error(f"Error extracting highlights: {str(e)}")
             raise
 
+    def upload_to_minio(self, file_path: Path):
+        try:
+            self.minio_client.fput_object(
+                self.bucket_name, file_path.name, str(file_path)
+            )
+            self.logger.info(f"Uploaded {file_path.name} to MinIO")
+        except S3Error as e:
+            self.logger.error(f"Error uploading to MinIO: {str(e)}")
+
     def get_enhanced_keywords(self, video_id: str) -> dict:
         """Get enhanced keywords and marketing insights."""
         try:
-            # Enhanced prompt for marketing insights
-            marketing_prompt = """Please provide the following information in JSON format:
-            {
-                "seo_keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
-                "target_audience": "description",
-                "ad_copy_themes": ["theme1", "theme2", "theme3"],
-                "content_elements": ["element1", "element2", "element3"],
-                "campaign_objectives": ["objective1", "objective2"],
-                "content_marketing_opportunities": ["opportunity1", "opportunity2"],
-                "emotional_triggers": ["trigger1", "trigger2"]
-            }
-            Based on this video content, analyze and fill the above structure with:
-            1. Top 5 SEO keywords (specific and targeted)
-            2. Primary target audience
-            3. Suggested ad copy themes
-            4. Best performing content elements
-            5. Recommended campaign objectives
-            6. Content marketing opportunities
-            7. Key emotional triggers identified
+            # Shortened prompt for marketing insights
+            marketing_prompt = """Provide JSON with:
+                {
+                    "shorts_keywords": ["keyword1", "keyword2", "keyword3"],
+                    "shorts_target_audience": "description",
+                    "shorts_hooks": ["hook1", "hook2"],
+                    "shorts_music_recommendations": ["sound1", "sound2"],
+                    "shorts_engagement_triggers": ["prompt1", "prompt2"],
+                    "shorts_call_to_actions": ["CTA1"],
+                    "shorts_popular_formats": ["format1"],
+                    "emotional_triggers": ["trigger1"]
+                }
+                Focus on YouTube Shorts performance metrics.
             """
 
             response = self.client.generate.text(
@@ -414,12 +462,12 @@ class YouTubeProcessor:
                     "text": highlight.text,
                     "start_time": highlight.start_time,
                     "end_time": highlight.end_time,
-                    "clip_path": highlight.clip_path
+                    "clip_path": highlight.clip_path,
                 }
                 for highlight in video_analysis.highlights
             ],
             "keywords": video_analysis.keywords,
-            "marketing_insights": video_analysis.marketing_insights
+            "marketing_insights": video_analysis.marketing_insights,
         }
         self.collection.insert_one(data_to_save)
         self.logger.info(f"Video analysis saved to MongoDB: {data_to_save}")
