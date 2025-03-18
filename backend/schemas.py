@@ -39,7 +39,7 @@ class VideoResponse(BaseModel):
                     {
                         "text": "Key moment description",
                         "start_time": 10.5,
-                        "end_time": 20.5,
+                        "end_time": 30.5,
                         "clip_path": "/path/to/highlight.mp4",
                     }
                 ],
