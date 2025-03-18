@@ -56,6 +56,8 @@ Thumbs.db
 *.sublime-workspace
 *.sublime-project
 
-.processed_videos/
+
+processed_videos/
+processed_ads/
 
 node_modules/

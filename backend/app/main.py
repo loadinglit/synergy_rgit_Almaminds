@@ -1,11 +1,14 @@
+import os
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from schemas import VideoRequest, VideoResponse
 from processor import YouTubeProcessor
-import os
+from google_ads_processor import GoogleAdsProcessor  # Import the new processor
+from schemas import VideoRequest, VideoResponse, GoogleAdsResponse
 from dotenv import load_dotenv
 import logging
 from typing import Dict, Any
+import yt_dlp  # Import yt_dlp for video information extraction
 
 
 # Load environment variables
@@ -32,10 +35,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize processor
-processor = YouTubeProcessor(
+
+# Initialize processors
+youtube_processor = YouTubeProcessor(
     api_key=os.getenv("TL_API_KEY"), output_dir="processed_videos"
 )
+
+google_ads_processor = GoogleAdsProcessor(
+    api_key=os.getenv("TL_API_KEY"), output_dir="processed_ads"
+)
+
+
+@app.post("/analyze-for-ads/", response_model=GoogleAdsResponse)
+async def analyze_for_ads(request: VideoRequest) -> Dict[str, Any]:
+    """
+    Analyze a YouTube video and generate Google Ads creatives
+    """
+    try:
+        url = str(request.url)
+        logger.info(f"Processing video URL for Google Ads: {url}")
+
+        # Validate YouTube URL
+        if "youtube.com" not in url and "youtu.be" not in url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid YouTube URL provided",
+            )
+
+        # Download and process the video using the YouTube processor methods
+        video_path = youtube_processor.download_youtube_video(url)
+        video_id = youtube_processor.create_index_and_process_video(video_path)
+
+        # Get video title
+        try:
+            with yt_dlp.YoutubeDL() as ydl:
+                info = ydl.extract_info(url, download=False)
+                title = info.get("title", "Unknown Title")
+        except Exception as e:
+            logger.warning(f"Error getting title: {e}")
+            title = "Unknown Title"
+
+        # Process for Google Ads
+        ads_result = google_ads_processor.process_video_for_ads(video_id, video_path)
+
+        return GoogleAdsResponse(
+            video_id=video_id,
+            title=title,
+            ad_creatives=ads_result["ad_creatives"],
+            ad_strategy=ads_result["ad_strategy"],
+        )
+
+    except ValueError as e:
+        logger.error(f"Value Error: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error processing video for ads: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing video for ads: {str(e)}",
+        )
 
 
 @app.post("/analyze/", response_model=VideoResponse)
@@ -46,42 +104,45 @@ async def analyze_video(request: VideoRequest) -> Dict[str, Any]:
     try:
         url = str(request.url)
         logger.info(f"Processing video URL: {url}")
-        
+
         # Validate YouTube URL
         if "youtube.com" not in url and "youtu.be" not in url:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid YouTube URL provided"
+                detail="Invalid YouTube URL provided",
             )
-        
+
+        processor = YouTubeProcessor(
+            api_key=os.getenv("TL_API_KEY"), output_dir="processed_videos"
+        )
         result = processor.process_youtube_url(url)
-        
+
         return VideoResponse(
             video_id=result.video_id,
             title=result.title,
             summary=result.summary,
-            highlights=[{
-                "text": h.text,
-                "start_time": h.start_time,
-                "end_time": h.end_time,
-                "clip_path": h.clip_path
-            } for h in result.highlights],
+            highlights=[
+                {
+                    "text": h.text,
+                    "start_time": h.start_time,
+                    "end_time": h.end_time,
+                    "clip_path": h.clip_path,
+                }
+                for h in result.highlights
+            ],
             # chapters=result.chapters,
             keywords=result.keywords,
-            marketing_insights=result.marketing_insights
+            marketing_insights=result.marketing_insights,
         )
-    
+
     except ValueError as e:
         logger.error(f"Value Error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing video: {str(e)}"
+            detail=f"Error processing video: {str(e)}",
         )
 
 
