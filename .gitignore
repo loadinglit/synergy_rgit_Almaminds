@@ -58,4 +58,4 @@ Thumbs.db
 
 .processed_videos/
 
-node_modules
+.node_modules/
