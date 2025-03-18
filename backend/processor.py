@@ -12,6 +12,8 @@ import time
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
 from pymongo import MongoClient
+from minio import Minio
+from minio.error import S3Error
 
 
 @dataclass
@@ -47,12 +49,27 @@ class YouTubeProcessor:
         self.db = self.mongo_client["video_analysis"]
         self.collection = self.db["video_metadata"]
         self.setup_logging()
+        self.minio_client = Minio(
+            "192.168.1.111:9000",  # MinIO server URL
+            access_key="minioadmin",
+            secret_key="minioadmin",
+            secure=False,  # Set to True if using HTTPS
+        )
+        self.bucket_name = "video-highlights"  # Change as needed
+        self.create_bucket_if_not_exists()
 
     def setup_logging(self):
         logging.basicConfig(
             level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
         )
         self.logger = logging.getLogger(__name__)
+
+    def create_bucket_if_not_exists(self):
+        try:
+            if not self.minio_client.bucket_exists(self.bucket_name):
+                self.minio_client.make_bucket(self.bucket_name)
+        except S3Error as e:
+            print("Error creating bucket:", e)
 
     def download_youtube_video(
         self, url: str, cookies_path: Optional[str] = None
@@ -314,6 +331,9 @@ class YouTubeProcessor:
                         "-y",
                     ]
                     subprocess.run(cmd, check=True, capture_output=True)
+
+                    # Upload to MinIO
+                    self.upload_to_minio(output_file)
                     
                     # Add to highlights
                     highlights.append(
@@ -326,12 +346,70 @@ class YouTubeProcessor:
                     )
                     self.logger.info(f"Created clip: {output_file} - Duration: {duration:.1f}s")
                 except Exception as e:
-                    self.logger.error(f"Error processing moment: {str(e)}")
-            
+                    self.logger.error(f"Error processing custom key moment: {str(e)}")
+
+            # If no custom key moments were successfully processed, fall back to standard highlights
+            if not highlights:
+                self.logger.info(
+                    "No custom key moments were successfully processed, using standard highlights"
+                )
+                for i, highlight in enumerate(standard_highlights.highlights):
+                    try:
+                        safe_text = "".join(
+                            c for c in highlight.highlight if c.isalnum() or c in " "
+                        ).strip()[:30]
+                        output_file = (
+                            highlights_dir / f"highlight_{i+1}_{safe_text}.mp4"
+                        )
+
+                        cmd = [
+                            "ffmpeg",
+                            "-i",
+                            str(source_video_path),
+                            "-ss",
+                            str(highlight.start),
+                            "-to",
+                            str(highlight.end),
+                            "-c:v",
+                            "copy",
+                            "-c:a",
+                            "copy",
+                            str(output_file),
+                            "-y",
+                        ]
+                        subprocess.run(cmd, check=True, capture_output=True)
+
+                        # Upload to MinIO
+                        self.upload_to_minio(output_file)
+
+                        highlights.append(
+                            VideoHighlight(
+                                text=highlight.highlight,
+                                start_time=highlight.start,
+                                end_time=highlight.end,
+                                clip_path=str(output_file),
+                            )
+                        )
+                        self.logger.info(
+                            f"Created standard highlight clip: {output_file}"
+                        )
+                    except subprocess.CalledProcessError as e:
+                        self.logger.error(f"FFmpeg error: {e.stderr.decode()}")
+                        continue
+
             return highlights
         except Exception as e:
             self.logger.error(f"Error extracting highlights: {str(e)}")
             raise
+
+    def upload_to_minio(self, file_path: Path):
+        try:
+            self.minio_client.fput_object(
+                self.bucket_name, file_path.name, str(file_path)
+            )
+            self.logger.info(f"Uploaded {file_path.name} to MinIO")
+        except S3Error as e:
+            self.logger.error(f"Error uploading to MinIO: {str(e)}")
 
     def get_enhanced_keywords(self, video_id: str) -> dict:
         """Get enhanced keywords and marketing insights."""
