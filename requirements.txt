@@ -1,2 +1,5 @@
 ffmpeg
 twelvelabs
+yt-dlp 
+requests 
+urllib3
