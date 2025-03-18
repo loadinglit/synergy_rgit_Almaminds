@@ -11,6 +11,7 @@ import json
 import time
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
+from pymongo import MongoClient
 
 
 @dataclass
@@ -33,17 +34,20 @@ class VideoAnalysis:
 
 
 class YouTubeProcessor:
-    def _init_(self, api_key: str, output_dir: str = "processed_videos"):
+    def __init__(self, api_key: str, output_dir: str = "processed_videos", mongo_uri: str = "mongodb://localhost:27017/"):
         self.client = TwelveLabs(api_key=api_key)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.mongo_client = MongoClient(mongo_uri)
+        self.db = self.mongo_client['video_analysis']
+        self.collection = self.db['video_metadata']
         self.setup_logging()
 
     def setup_logging(self):
         logging.basicConfig(
             level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
         )
-        self.logger = logging.getLogger(_name_)
+        self.logger = logging.getLogger(__name__)
 
     def download_youtube_video(
         self, url: str, cookies_path: Optional[str] = None
@@ -399,6 +403,27 @@ class YouTubeProcessor:
             self.logger.error(f"Error getting keywords: {str(e)}")
             raise
 
+    def save_video_analysis_to_mongo(self, video_analysis: VideoAnalysis):
+        """Save video analysis data to MongoDB, excluding chapters."""
+        data_to_save = {
+            "video_id": video_analysis.video_id,
+            "title": video_analysis.title,
+            "summary": video_analysis.summary,
+            "highlights": [
+                {
+                    "text": highlight.text,
+                    "start_time": highlight.start_time,
+                    "end_time": highlight.end_time,
+                    "clip_path": highlight.clip_path
+                }
+                for highlight in video_analysis.highlights
+            ],
+            "keywords": video_analysis.keywords,
+            "marketing_insights": video_analysis.marketing_insights
+        }
+        self.collection.insert_one(data_to_save)
+        self.logger.info(f"Video analysis saved to MongoDB: {data_to_save}")
+
     def process_youtube_url(self, url: str) -> VideoAnalysis:
         """Main pipeline to process YouTube URL and return analysis."""
         try:
@@ -412,20 +437,6 @@ class YouTubeProcessor:
             summary = self.client.generate.summarize(
                 video_id=video_id, type="summary"
             ).summary
-
-            # # Get chapters
-            # chapters = self.client.generate.summarize(
-            #     video_id=video_id, type="chapter"
-            # ).chapters
-            # chapters_data = [
-            #     {
-            #         "number": c.chapter_number,
-            #         "title": c.chapter_title,
-            #         "start": c.start,
-            #         "end": c.end,
-            #     }
-            #     for c in chapters
-            # ]
 
             # Get highlights
             highlights = self.extract_highlights(video_id, video_path)
@@ -442,15 +453,19 @@ class YouTubeProcessor:
                 self.logger.warning(f"Error getting title: {e}")
                 title = "Unknown Title"
 
-            return VideoAnalysis(
+            video_analysis = VideoAnalysis(
                 video_id=video_id,
-                title=title,  # Using the title from yt-dlp
+                title=title,
                 summary=summary,
                 highlights=highlights,
-                # chapters=chapters_data,
                 keywords=marketing_data.get("seo_keywords", []),
                 marketing_insights=marketing_data,
             )
+
+            # Save to MongoDB
+            self.save_video_analysis_to_mongo(video_analysis)
+
+            return video_analysis
 
         except Exception as e:
             self.logger.error(f"Error in processing pipeline: {str(e)}")
