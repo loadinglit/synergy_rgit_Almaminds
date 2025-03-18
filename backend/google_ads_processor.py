@@ -8,6 +8,8 @@ from twelvelabs import TwelveLabs
 import os
 import time
 from datetime import datetime
+from minio import Minio
+from minio.error import S3Error
 
 
 @dataclass
@@ -33,8 +35,23 @@ class GoogleAdsProcessor:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.setup_logging()
+        self.minio_client = Minio(
+            "192.168.1.111:9000",  # MinIO server URL
+            access_key="minioadmin",
+            secret_key="minioadmin",
+            secure=False,  # Set to True if using HTTPS
+        )
+        self.bucket_name = "video-ads"  # Change as needed
+        self.create_bucket_if_not_exists()
 
         # MongoDB setup can be added if needed similar to YouTubeProcessor
+
+    def create_bucket_if_not_exists(self):
+        try:
+            if not self.minio_client.bucket_exists(self.bucket_name):
+                self.minio_client.make_bucket(self.bucket_name)
+        except S3Error as e:
+            print("Error creating bucket:", e)
 
     def setup_logging(self):
         logging.basicConfig(
@@ -137,6 +154,9 @@ SELECTION CRITERIA:
                             ]
                             subprocess.run(cmd, check=True, capture_output=True)
 
+                            # Upload to MinIO
+                            self.upload_to_minio(output_file)
+
                             # Create ad creative object
                             ad_creative = AdCreative(
                                 ad_type=ad_format["type"],
@@ -144,7 +164,9 @@ SELECTION CRITERIA:
                                 description=ad_data.get("description", ""),
                                 call_to_action=ad_data.get("call_to_action", ""),
                                 target_audience=ad_data.get("target_audience", ""),
-                                clip_path=str(output_file),
+                                clip_path=str(
+                                    output_file
+                                ),  # Keep local path for logging
                                 start_time=start_time,
                                 end_time=end_time,
                             )
@@ -169,6 +191,15 @@ SELECTION CRITERIA:
         except Exception as e:
             self.logger.error(f"Error extracting ad creatives: {str(e)}")
             raise
+
+    def upload_to_minio(self, file_path: Path):
+        try:
+            self.minio_client.fput_object(
+                self.bucket_name, file_path.name, str(file_path)
+            )
+            self.logger.info(f"Uploaded {file_path.name} to MinIO")
+        except S3Error as e:
+            self.logger.error(f"Error uploading to MinIO: {str(e)}")
 
     def get_ad_strategy(self, video_id: str) -> Dict[str, Any]:
         """Get ad campaign strategy recommendations."""

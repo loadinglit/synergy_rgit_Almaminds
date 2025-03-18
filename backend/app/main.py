@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 import logging
 from typing import Dict, Any
 import yt_dlp  # Import yt_dlp for video information extraction
+from pydantic import BaseModel
+from minio import Minio
+from minio.error import S3Error
 
 
 # Load environment variables
@@ -44,6 +47,28 @@ youtube_processor = YouTubeProcessor(
 google_ads_processor = GoogleAdsProcessor(
     api_key=os.getenv("TL_API_KEY"), output_dir="processed_ads"
 )
+
+# Initialize MinIO client
+minio_client = Minio(
+    "192.168.1.111:9000",  # Update with your MinIO server address
+    access_key="minioadmin",
+    secret_key="minioadmin",
+    secure=False,  # Set to True if using HTTPS
+)
+
+bucket_name = "video-highlights"  # Change to your bucket name
+
+
+@app.get("/files/")
+async def list_files():
+    """Retrieve the list of files from the MinIO bucket."""
+    try:
+        # List objects in the specified bucket
+        objects = minio_client.list_objects(bucket_name)
+        file_list = [obj.object_name for obj in objects]
+        return {"files": file_list}
+    except S3Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/analyze-for-ads/", response_model=GoogleAdsResponse)
