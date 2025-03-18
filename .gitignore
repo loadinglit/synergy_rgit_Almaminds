@@ -1,2 +1,6 @@
 .env
 .processed_videos/
+# Ignore all files in the processed_videos directory
+# except for the .gitkeep file
+# processed_videos/*
+.node_modules/
