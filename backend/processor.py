@@ -34,13 +34,18 @@ class VideoAnalysis:
 
 
 class YouTubeProcessor:
-    def __init__(self, api_key: str, output_dir: str = "processed_videos", mongo_uri: str = "mongodb+srv://dhruvpatel:dhruv77@cluster0.sedmq.mongodb.net/"):
+    def __init__(
+        self,
+        api_key: str,
+        output_dir: str = "processed_videos",
+        mongo_uri: str = "mongodb+srv://dhruvpatel:dhruv77@cluster0.sedmq.mongodb.net/",
+    ):
         self.client = TwelveLabs(api_key=api_key)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.mongo_client = MongoClient(mongo_uri)
-        self.db = self.mongo_client['video_analysis']
-        self.collection = self.db['video_metadata']
+        self.db = self.mongo_client["video_analysis"]
+        self.collection = self.db["video_metadata"]
         self.setup_logging()
 
     def setup_logging(self):
@@ -331,25 +336,19 @@ class YouTubeProcessor:
     def get_enhanced_keywords(self, video_id: str) -> dict:
         """Get enhanced keywords and marketing insights."""
         try:
-            # Enhanced prompt for marketing insights
-            marketing_prompt = """Please provide the following information in JSON format:
-            {
-                "seo_keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
-                "target_audience": "description",
-                "ad_copy_themes": ["theme1", "theme2", "theme3"],
-                "content_elements": ["element1", "element2", "element3"],
-                "campaign_objectives": ["objective1", "objective2"],
-                "content_marketing_opportunities": ["opportunity1", "opportunity2"],
-                "emotional_triggers": ["trigger1", "trigger2"]
-            }
-            Based on this video content, analyze and fill the above structure with:
-            1. Top 5 SEO keywords (specific and targeted)
-            2. Primary target audience
-            3. Suggested ad copy themes
-            4. Best performing content elements
-            5. Recommended campaign objectives
-            6. Content marketing opportunities
-            7. Key emotional triggers identified
+            # Shortened prompt for marketing insights
+            marketing_prompt = """Provide JSON with:
+                {
+                    "shorts_keywords": ["keyword1", "keyword2", "keyword3"],
+                    "shorts_target_audience": "description",
+                    "shorts_hooks": ["hook1", "hook2"],
+                    "shorts_music_recommendations": ["sound1", "sound2"],
+                    "shorts_engagement_triggers": ["prompt1", "prompt2"],
+                    "shorts_call_to_actions": ["CTA1"],
+                    "shorts_popular_formats": ["format1"],
+                    "emotional_triggers": ["trigger1"]
+                }
+                Focus on YouTube Shorts performance metrics.
             """
 
             response = self.client.generate.text(
@@ -426,12 +425,12 @@ class YouTubeProcessor:
                     "text": highlight.text,
                     "start_time": highlight.start_time,
                     "end_time": highlight.end_time,
-                    "clip_path": highlight.clip_path
+                    "clip_path": highlight.clip_path,
                 }
                 for highlight in video_analysis.highlights
             ],
             "keywords": video_analysis.keywords,
-            "marketing_insights": video_analysis.marketing_insights
+            "marketing_insights": video_analysis.marketing_insights,
         }
         self.collection.insert_one(data_to_save)
         self.logger.info(f"Video analysis saved to MongoDB: {data_to_save}")

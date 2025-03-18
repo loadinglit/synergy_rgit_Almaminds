@@ -54,3 +54,59 @@ class VideoResponse(BaseModel):
                 },
             }
         }
+
+
+class AdCreative(BaseModel):
+    ad_type: str
+    headline: str
+    description: str
+    call_to_action: str
+    target_audience: str
+    clip_path: str
+    start_time: float
+    end_time: float
+
+
+class AdStrategy(BaseModel):
+    campaign_objective: str
+    audience_segments: List[str]
+    bidding_strategy: str
+    targeting_recommendations: List[str]
+    performance_metrics: List[str]
+
+
+class GoogleAdsResponse(BaseModel):
+    video_id: str
+    title: str
+    ad_creatives: List[AdCreative]
+    ad_strategy: AdStrategy
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "video_id": "abc123",
+                "title": "Sample Video Title",
+                "ad_creatives": [
+                    {
+                        "ad_type": "bumper",
+                        "headline": "Amazing Product",
+                        "description": "Transform your life with our revolutionary solution",
+                        "call_to_action": "Shop Now",
+                        "target_audience": "Tech enthusiasts",
+                        "clip_path": "/path/to/ad.mp4",
+                        "start_time": 45.2,
+                        "end_time": 51.2,
+                    }
+                ],
+                "ad_strategy": {
+                    "campaign_objective": "Brand awareness",
+                    "audience_segments": ["Males 25-34", "Tech enthusiasts"],
+                    "bidding_strategy": "Maximize impressions",
+                    "targeting_recommendations": [
+                        "Content targeting",
+                        "Affinity audiences",
+                    ],
+                    "performance_metrics": ["View rate", "Click-through rate"],
+                },
+            }
+        }
