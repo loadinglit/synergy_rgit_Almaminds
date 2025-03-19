@@ -179,7 +179,7 @@ class YouTubeProcessor:
             self.logger.error(f"Error processing video: {str(e)}")
             raise
 
-    def extract_highlights(self, video_id: str, source_video_path: Path) -> List[VideoHighlight]:
+    def extract_highlights(self, video_id: str, source_video_path: Path, video_title: str = None) -> List[VideoHighlight]:
        
         """Extract meaningful video highlights based on content importance rather than fixed durations."""
         highlights = []
@@ -323,6 +323,7 @@ class YouTubeProcessor:
                         "-i", str(source_video_path),
                         "-ss", str(start_time),
                         "-to", str(end_time),
+                        "-vf", f"drawtext=text='{video_title}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=30:enable='between(t,0,3)'",
                         "-c:v", "libx264",  # Re-encode video instead of copy
                         "-c:a", "aac",      # Re-encode audio
                         "-b:a", "192k",     # Set audio bitrate
@@ -370,6 +371,7 @@ class YouTubeProcessor:
                             str(highlight.start),
                             "-to",
                             str(highlight.end),
+                            "-vf", f"drawtext=text='{video_title}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=30:enable='between(t,0,3)'",
                             "-c:v",
                             "copy",
                             "-c:a",
@@ -522,13 +524,22 @@ class YouTubeProcessor:
             # Process video
             video_id = self.create_index_and_process_video(video_path)
 
+
+            # Get title (without using pytube)
+            try:
+                with yt_dlp.YoutubeDL() as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    title = info.get("title", "Unknown Title")
+            except Exception as e:
+                self.logger.warning(f"Error getting title: {e}")
+                title = "Unknown Title"
             # Get summary
             summary = self.client.generate.summarize(
                 video_id=video_id, type="summary"
             ).summary
 
             # Get highlights
-            highlights = self.extract_highlights(video_id, video_path)
+            highlights = self.extract_highlights(video_id, video_path,title)
 
             # Get enhanced keywords and marketing insights
             marketing_data = self.get_enhanced_keywords(video_id)

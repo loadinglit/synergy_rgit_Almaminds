@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 from minio import Minio
 from minio.error import S3Error
+from pymongo import MongoClient  # Add this import if not present
 
 
 @dataclass
@@ -28,21 +29,27 @@ class GoogleAdsProcessor:
     def __init__(
         self,
         api_key: str,
-        mongo_uri: Optional[str] = None,
+        output_dir: str = "processed_ads",
+        mongo_uri: str = "mongodb+srv://dhruvpatel:dhruv77@cluster0.sedmq.mongodb.net/",  # Use the same URI
     ):
         self.client = TwelveLabs(api_key=api_key)
 
         self.setup_logging()
+        
+        # Initialize MongoDB
+        self.mongo_client = MongoClient(mongo_uri)
+        self.db = self.mongo_client["video_analysis"]  # Use same database as other collections
+        self.collection = self.db["add-metadata"]  # New collection for ad metadata
+        
+        # MinIO setup
         self.minio_client = Minio(
-            "192.168.1.111:9000",  # MinIO server URL
+            "192.168.1.111:9000",
             access_key="minioadmin",
             secret_key="minioadmin",
-            secure=False,  # Set to True if using HTTPS
+            secure=False,
         )
-        self.bucket_name = "video-ads"  # Change as needed
+        self.bucket_name = "video-ads"
         self.create_bucket_if_not_exists()
-
-        # MongoDB setup can be added if needed similar to YouTubeProcessor
 
     def create_bucket_if_not_exists(self):
         try:
@@ -366,6 +373,32 @@ Focus on:
             self.logger.error(f"Error getting ad strategy: {str(e)}")
             raise
 
+    # Add this new method to save to MongoDB
+    def save_ad_data_to_mongo(self, ad_data: Dict[str, Any]) -> None:
+        """Save the entire ad processing response to MongoDB."""
+        # Add a timestamp
+        ad_data["timestamp"] = datetime.now()
+        
+        # Convert any non-serializable objects to strings
+        serializable_data = self._ensure_serializable(ad_data)
+        
+        # Store in MongoDB
+        self.collection.insert_one(serializable_data)
+        self.logger.info(f"Stored ad processing data in MongoDB collection: add-metadata")
+    
+    def _ensure_serializable(self, data):
+        """Ensure all data is serializable for MongoDB storage."""
+        if isinstance(data, dict):
+            return {k: self._ensure_serializable(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._ensure_serializable(i) for i in data]
+        elif isinstance(data, (str, int, float, bool)) or data is None:
+            return data
+        else:
+            # Convert anything else to string
+            return str(data)
+    
+    # Modify the process_video_for_ads method to save data to MongoDB
     def process_video_for_ads(
         self, video_id: str, source_video_path: Path
     ) -> Dict[str, Any]:
@@ -379,6 +412,9 @@ Focus on:
 
             # Create results dictionary
             result = {
+                "video_id": video_id,
+                "source_video": str(source_video_path),
+                "processing_timestamp": datetime.now().isoformat(),
                 "ad_creatives": [
                     {
                         "ad_type": creative.ad_type,
@@ -394,6 +430,9 @@ Focus on:
                 ],
                 "ad_strategy": ad_strategy,
             }
+
+            # Save the complete result to MongoDB
+            self.save_ad_data_to_mongo(result)
 
             return result
 
