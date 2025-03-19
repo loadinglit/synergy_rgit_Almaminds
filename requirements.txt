@@ -1,0 +1,10 @@
+ffmpeg
+twelvelabs
+yt-dlp 
+requests 
+urllib3
+uvicorn
+fastapi
+pydantic
+pytube
+python-dotenv
