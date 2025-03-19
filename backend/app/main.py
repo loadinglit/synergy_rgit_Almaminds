@@ -1,8 +1,10 @@
 import os
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Body
 from fastapi.middleware.cors import CORSMiddleware
 from schemas import VideoRequest, VideoResponse
 from processor import YouTubeProcessor
+from pydantic import BaseModel
+from pathlib import Path
 from google_ads_processor import GoogleAdsProcessor  # Import the new processor
 from schemas import VideoRequest, VideoResponse, GoogleAdsResponse
 from dotenv import load_dotenv
@@ -171,3 +173,47 @@ async def health_check():
     Health check endpoint
     """
     return {"status": "healthy"}
+
+
+class LocalVideoRequest(BaseModel):
+    file_path: str
+
+
+@app.post("/process-local-video/")
+async def process_local_video(request: LocalVideoRequest):
+    """Process a local video file and generate ads"""
+    try:
+        file_path = Path(request.file_path)
+        
+        # Check if file exists
+        if not file_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Video file not found: {file_path}"
+            )
+        
+        logger.info(f"Processing local video: {file_path}")
+        
+        # Create video ID for processing (could be the filename)
+        video_id = f"local_{file_path.stem}"
+        
+        # Index the video (assuming your processor can handle local files)
+        # If not, you may need to adapt this part
+        video_id = youtube_processor.create_index_and_process_video(file_path)
+        
+        # Process for Google Ads
+        ads_result = google_ads_processor.process_video_for_ads(video_id, file_path)
+        
+        return {
+            "video_id": video_id,
+            "title": file_path.stem,
+            "ad_creatives": ads_result["ad_creatives"],
+            "ad_strategy": ads_result["ad_strategy"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing local video: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing video: {str(e)}"
+        )

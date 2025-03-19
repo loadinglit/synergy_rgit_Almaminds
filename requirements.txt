@@ -8,3 +8,4 @@ fastapi
 pydantic
 pytube
 python-dotenv
+pymongo
