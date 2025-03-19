@@ -272,7 +272,10 @@ class YouTubeProcessor:
                     safe_text = "".join(
                         c for c in description if c.isalnum() or c in " "
                     ).strip()[:30]
-                    output_file = highlights_dir / f"key_moment_{i+1}_{safe_text}.mp4"
+                    output_file = (
+                        ads_dir
+                        / f"{ad_format['type']}_{safe_headline}_{int(datetime.now().timestamp())}.mp4"
+                    )
 
                     # For vertical cropping optimized for YouTube Shorts
                     cmd = [
@@ -382,7 +385,7 @@ class YouTubeProcessor:
                     "shorts_music_recommendations": ["sound1", "sound2"],
                     "shorts_engagement_triggers": ["prompt1", "prompt2"],
                     "shorts_call_to_actions": ["CTA1"],
-                    "shorts_popular_formats": ["format1"],
+                    "shorts_popular_formats": ["format1"],       
                     "emotional_triggers": ["trigger1"]
                 }
                 Focus on YouTube Shorts performance metrics.

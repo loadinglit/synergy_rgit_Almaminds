@@ -12,6 +12,7 @@ import yt_dlp  # Import yt_dlp for video information extraction
 from pydantic import BaseModel
 from minio import Minio
 from minio.error import S3Error
+from datetime import datetime
 
 
 # Load environment variables
@@ -39,14 +40,7 @@ app.add_middleware(
 )
 
 
-# Initialize processors
-youtube_processor = YouTubeProcessor(
-    api_key=os.getenv("TL_API_KEY"), output_dir="processed_videos"
-)
-
-google_ads_processor = GoogleAdsProcessor(
-    api_key=os.getenv("TL_API_KEY"), output_dir="processed_ads"
-)
+google_ads_processor = GoogleAdsProcessor(api_key=os.getenv("TL_API_KEY"))
 
 # Initialize MinIO client
 minio_client = Minio(

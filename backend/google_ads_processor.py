@@ -28,12 +28,10 @@ class GoogleAdsProcessor:
     def __init__(
         self,
         api_key: str,
-        output_dir: str = "processed_ads",
         mongo_uri: Optional[str] = None,
     ):
         self.client = TwelveLabs(api_key=api_key)
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+
         self.setup_logging()
         self.minio_client = Minio(
             "192.168.1.111:9000",  # MinIO server URL
