@@ -35,12 +35,14 @@ class GoogleAdsProcessor:
         self.client = TwelveLabs(api_key=api_key)
 
         self.setup_logging()
-        
+
         # Initialize MongoDB
         self.mongo_client = MongoClient(mongo_uri)
-        self.db = self.mongo_client["video_analysis"]  # Use same database as other collections
+        self.db = self.mongo_client[
+            "video_analysis"
+        ]  # Use same database as other collections
         self.collection = self.db["add-metadata"]  # New collection for ad metadata
-        
+
         # MinIO setup
         self.minio_client = Minio(
             "192.168.1.111:9000",
@@ -94,32 +96,38 @@ class GoogleAdsProcessor:
             
             Focus on moments that would make compelling ad content rather than just scene changes.
             """
-            
+
             self.logger.info("Analyzing video for scene transitions...")
             transitions_response = self.client.generate.text(
                 video_id=video_id, prompt=scene_analysis_prompt
             )
-            
+
             try:
                 transitions_data = json.loads(transitions_response.data)
                 scene_transitions = transitions_data.get("scene_transitions", [])
                 transition_times = [t["time"] for t in scene_transitions]
-                
+
                 # Add video start and approximate end to transitions
                 video_info = self._get_video_duration(source_video_path)
                 video_duration = video_info.get("duration", 0)
                 transition_times = [0] + transition_times + [video_duration]
                 self.logger.info(f"Detected {len(transition_times)} scene transitions")
-                
+
             except json.JSONDecodeError:
                 self.logger.warning("Failed to parse scene transitions")
                 # Fallback to basic timestamps if scene detection fails
                 video_info = self._get_video_duration(source_video_path)
                 video_duration = video_info.get("duration", 0)
                 # Create some basic segments at 25% intervals as fallback
-                transition_times = [0, video_duration * 0.25, video_duration * 0.5, video_duration * 0.75, video_duration]
+                transition_times = [
+                    0,
+                    video_duration * 0.25,
+                    video_duration * 0.5,
+                    video_duration * 0.75,
+                    video_duration,
+                ]
                 self.logger.info(f"Using fallback transition times: {transition_times}")
-                
+
             # Define ad formats to generate
             ad_formats = [
                 # {"type": "bumper", "duration": 10},  # 6-second bumper ad
@@ -153,9 +161,11 @@ class GoogleAdsProcessor:
                 - No distracting elements
                 - Strong hook and clear CTA
                 - Segment must make sense as a standalone advertisement"""
-                
+
                 # Get AI-identified ad segments
-                self.logger.info(f"Identifying {ad_format['type']} ad segments at natural boundaries...")
+                self.logger.info(
+                    f"Identifying {ad_format['type']} ad segments at natural boundaries..."
+                )
                 try:
                     response = self.client.generate.text(
                         video_id=video_id, prompt=ad_prompt
@@ -169,33 +179,43 @@ class GoogleAdsProcessor:
 
                             # Get timestamps from response
                             start_time = float(ad_data.get("start_time", 0))
-                            end_time = float(ad_data.get("end_time", start_time + ad_format["duration"]))
+                            end_time = float(
+                                ad_data.get(
+                                    "end_time", start_time + ad_format["duration"]
+                                )
+                            )
                             segment_rationale = ad_data.get("segment_rationale", "")
-                            
+
                             # Validate duration and adjust if needed
                             actual_duration = end_time - start_time
                             if abs(actual_duration - ad_format["duration"]) > 2:
-                                self.logger.warning(f"Duration mismatch: {actual_duration}s vs expected {ad_format['duration']}s")
-                                
+                                self.logger.warning(
+                                    f"Duration mismatch: {actual_duration}s vs expected {ad_format['duration']}s"
+                                )
+
                                 # Find closest transition points that give us the right duration
                                 best_start = start_time
                                 best_end = end_time
                                 best_diff = abs(actual_duration - ad_format["duration"])
-                                
+
                                 for t_start in transition_times:
                                     for t_end in transition_times:
                                         if t_end <= t_start:
                                             continue
-                                        diff = abs((t_end - t_start) - ad_format["duration"])
+                                        diff = abs(
+                                            (t_end - t_start) - ad_format["duration"]
+                                        )
                                         if diff < best_diff:
                                             best_start = t_start
                                             best_end = t_end
                                             best_diff = diff
-                                
+
                                 start_time = best_start
                                 end_time = best_end
-                                self.logger.info(f"Adjusted timestamps to {start_time}-{end_time} (duration: {end_time-start_time}s)")
-                            
+                                self.logger.info(
+                                    f"Adjusted timestamps to {start_time}-{end_time} (duration: {end_time-start_time}s)"
+                                )
+
                             # Validate segment makes sense with a second prompt
                             segment_validation_prompt = f"""
                             Review the video segment from {start_time} to {end_time} seconds.
@@ -210,12 +230,12 @@ class GoogleAdsProcessor:
                               "reason": "explanation of why changes were needed or why segment is good"
                             }}
                             """
-                            
+
                             self.logger.info(f"Validating segment coherence...")
                             validation_response = self.client.generate.text(
                                 video_id=video_id, prompt=segment_validation_prompt
                             )
-                            
+
                             try:
                                 validation_data = json.loads(validation_response.data)
                                 if not validation_data.get("is_coherent", True):
@@ -223,15 +243,19 @@ class GoogleAdsProcessor:
                                     new_start = validation_data.get("improved_start")
                                     new_end = validation_data.get("improved_end")
                                     reason = validation_data.get("reason", "")
-                                    
+
                                     if new_start is not None and new_end is not None:
                                         start_time = float(new_start)
                                         end_time = float(new_end)
-                                        self.logger.info(f"Adjusted timestamps for coherence: {start_time}-{end_time}")
+                                        self.logger.info(
+                                            f"Adjusted timestamps for coherence: {start_time}-{end_time}"
+                                        )
                                         self.logger.info(f"Reason: {reason}")
-                                
+
                             except json.JSONDecodeError:
-                                self.logger.warning(f"Failed to parse validation response")
+                                self.logger.warning(
+                                    f"Failed to parse validation response"
+                                )
 
                             # Create directory for ad creatives
                             ads_dir = source_video_path.parent / "ads"
@@ -264,7 +288,9 @@ class GoogleAdsProcessor:
                                 str(output_file),
                                 "-y",
                             ]
-                            self.logger.info(f"Extracting clip from {start_time}s to {end_time}s...")
+                            self.logger.info(
+                                f"Extracting clip from {start_time}s to {end_time}s..."
+                            )
                             subprocess.run(cmd, check=True, capture_output=True)
 
                             # Upload to MinIO
@@ -289,7 +315,9 @@ class GoogleAdsProcessor:
                                 f"Created {ad_format['type']} ad creative: {output_file} ({end_time-start_time:.1f}s)"
                             )
                             self.logger.info(f"Headline: {ad_data.get('headline', '')}")
-                            self.logger.info(f"CTA: {ad_data.get('call_to_action', '')}")
+                            self.logger.info(
+                                f"CTA: {ad_data.get('call_to_action', '')}"
+                            )
 
                     except json.JSONDecodeError:
                         self.logger.warning(
@@ -321,10 +349,13 @@ class GoogleAdsProcessor:
         try:
             cmd = [
                 "ffprobe",
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "json",
-                str(video_path)
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                str(video_path),
             ]
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             data = json.loads(result.stdout)
@@ -378,14 +409,16 @@ Focus on:
         """Save the entire ad processing response to MongoDB."""
         # Add a timestamp
         ad_data["timestamp"] = datetime.now()
-        
+
         # Convert any non-serializable objects to strings
         serializable_data = self._ensure_serializable(ad_data)
-        
+
         # Store in MongoDB
         self.collection.insert_one(serializable_data)
-        self.logger.info(f"Stored ad processing data in MongoDB collection: add-metadata")
-    
+        self.logger.info(
+            f"Stored ad processing data in MongoDB collection: add-metadata"
+        )
+
     def _ensure_serializable(self, data):
         """Ensure all data is serializable for MongoDB storage."""
         if isinstance(data, dict):
@@ -397,7 +430,7 @@ Focus on:
         else:
             # Convert anything else to string
             return str(data)
-    
+
     # Modify the process_video_for_ads method to save data to MongoDB
     def process_video_for_ads(
         self, video_id: str, source_video_path: Path
